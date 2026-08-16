@@ -61,6 +61,59 @@ after the shock rather than averaging it away.
 
 Runnable version: `go run ./examples/horizon`.
 
+## Cox proportional hazards
+
+```go
+c := &hazard.Cox{}            // Ties defaults to Efron
+if err := c.Fit(observations); err != nil { return err }
+
+c.Coefficients()              // log hazard ratios
+c.HazardRatios()              // exp(beta): 2.0 means twice the risk
+c.RiskScore(x)                // this subject relative to baseline
+curve, _ := c.Survival(x)     // Breslow baseline + risk score
+```
+
+Cox never assumes a shape for the baseline hazard, so it cannot be wrong about
+the shape of time. In exchange it assumes each covariate's effect is a constant
+multiplier across the whole follow-up. When that fails, the coefficient is an
+average of something that moved — a number describing no period in particular:
+
+```go
+drift, _ := c.ProportionalityCheck(observations)  // early-half vs late-half coefficients
+```
+
+A large drift is the signal to switch to `DiscreteTime`, where the effect is
+free to vary by period.
+
+**Ties matter more than they look.** With day-granular data most event times are
+tied, and Breslow charges the full risk set for every tied failure, biasing
+coefficients toward zero. Efron discounts them as they are removed and is the
+default. The test suite checks that Efron is the more accurate of the two on
+heavily tied data rather than taking it on faith.
+
+## Confidence bands and comparisons
+
+```go
+band, _ := km.Greenwood(0.95)              // pointwise band on the log-log scale
+na, _ := hazard.FitNelsonAalen(obs)        // cumulative hazard H(t)
+res, _ := hazard.LogRank(groupA, groupB)   // do two groups differ?
+fmt.Println(res)  // chi2=18.402 p=0.0000 (group A did worse than expected: ...)
+```
+
+Three things worth knowing about these:
+
+**The band is pointwise, not simultaneous.** Each time point covers at the
+stated level; the probability the *whole curve* stays inside is lower. Quoting
+one as the other is the standard way to overstate certainty.
+
+**It is built on the log-log scale.** A naive `S ± z·se` runs above 1 near the
+start and below 0 in the tail, and a band containing impossible values reads as
+a broken estimate.
+
+**Log-rank is weakest exactly where curves cross.** It is most powerful under
+proportional hazards; two curves that cross can return a large p-value while
+being obviously different, because early and late differences cancel.
+
 ## Evaluation
 
 ```go

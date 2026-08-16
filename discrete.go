@@ -3,6 +3,8 @@ package hazard
 import (
 	"fmt"
 	"math"
+
+	"github.com/cleatonxyz/hazard/internal/optimize"
 )
 
 // PersonPeriod is one subject in one time period: the row layout a discrete
@@ -123,48 +125,30 @@ func (d *DiscreteTime) Fit(rows []PersonPeriod) error {
 		d.baseline[i] = init
 	}
 
-	step := 0.5
-	prev := d.logLikelihood(rows)
-	for iter := 0; iter < d.MaxIter; iter++ {
-		gBase, gBeta := d.gradient(rows)
-
-		// Backtracking: shrink the step until the objective actually improves.
-		// A fixed learning rate diverges as soon as one covariate is on a
-		// different scale from the others, which callers cannot be asked to
-		// guarantee.
-		improved := false
-		for shrink := 0; shrink < 40; shrink++ {
-			oldBase := append([]float64(nil), d.baseline...)
-			oldBeta := append([]float64(nil), d.beta...)
-			for i := range d.baseline {
-				d.baseline[i] += step * gBase[i]
-			}
-			for j := range d.beta {
-				d.beta[j] += step * gBeta[j]
-			}
-			ll := d.logLikelihood(rows)
-			if ll > prev {
-				if math.Abs(ll-prev) < d.Tol*(math.Abs(prev)+1) {
-					d.fitted = true
-					return nil
-				}
-				prev = ll
-				step *= 1.1
-				improved = true
-				break
-			}
-			d.baseline, d.beta = oldBase, oldBeta
-			step /= 2
-		}
-		if !improved {
-			// Step size collapsed: we are at an optimum within machine
-			// precision, which is a success, not a failure.
-			d.fitted = true
-			return nil
-		}
-	}
+	// Parameters are packed as [baselines..., beta...] so the shared optimizer
+	// sees one vector. The packing lives here rather than in optimize because
+	// only this model knows which slots mean what.
+	res := optimize.Ascend(
+		func(x []float64) (float64, []float64) {
+			d.unpack(x)
+			gBase, gBeta := d.gradient(rows)
+			return d.logLikelihood(rows), append(gBase, gBeta...)
+		},
+		append(append([]float64(nil), d.baseline...), d.beta...),
+		optimize.Options{MaxIter: d.MaxIter, Tol: d.Tol},
+	)
+	d.unpack(res.X)
 	d.fitted = true
-	return fmt.Errorf("%w: stopped after %d iterations", ErrDidNotConverge, d.MaxIter)
+	if !res.Converged {
+		return fmt.Errorf("%w: stopped after %d iterations", ErrDidNotConverge, res.Iters)
+	}
+	return nil
+}
+
+// unpack splits the flat parameter vector back into baselines and coefficients.
+func (d *DiscreteTime) unpack(x []float64) {
+	copy(d.baseline, x[:len(d.baseline)])
+	copy(d.beta, x[len(d.baseline):])
 }
 
 // Hazard returns the probability of failing in the given period, conditional on
