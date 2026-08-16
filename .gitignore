@@ -1,0 +1,13 @@
+# Local cross-repo development only. Never commit these: CI checks out each
+# repo on its own, so anything assuming a sibling directory breaks the build.
+go.work
+go.work.sum
+
+# Build and coverage output
+/bin/
+cover.out
+coverage.html
+
+*.test
+*.out
+.DS_Store
